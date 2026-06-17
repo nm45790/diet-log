@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { addWeight, addMeal, deleteWeight, deleteMeal } from "./actions";
+import NaturalInput from "./NaturalInput";
 
 // 끼니 라벨 — 파스텔 100 / 텍스트 700 으로 톤 통일 (서로 안 싸우게)
 const MEAL_META: Record<string, { label: string; cls: string }> = {
@@ -41,7 +42,7 @@ export default async function Home() {
 
   const latest = weights[0];
   const prev = weights[1];
-  const delta = latest && prev ? +(latest.weightKg - prev.weightKg).toFixed(1) : null;
+  const delta = latest && prev ? +(latest.weightKg - prev.weightKg).toFixed(2) : null;
 
   return (
     <main className="mx-auto max-w-2xl px-5 py-12">
@@ -92,6 +93,9 @@ export default async function Home() {
         </div>
       </div>
 
+      {/* 🤖 자연어 한 줄 입력 */}
+      <NaturalInput />
+
       {/* 몸무게 */}
       <section className={`mb-5 ${card}`}>
         <h2 className="mb-4 text-base font-bold text-slate-800">🏋️ 몸무게 기록</h2>
@@ -102,7 +106,7 @@ export default async function Home() {
           </label>
           <label className={fieldLabel}>
             몸무게(kg)
-            <input type="number" name="weightKg" step="0.1" placeholder="70.5" required
+            <input type="number" name="weightKg" step="0.01" placeholder="70.55" required
               className={`${input} w-24`} />
           </label>
           <label className={`${fieldLabel} min-w-32 flex-1`}>
