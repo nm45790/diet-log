@@ -46,7 +46,7 @@ export default function NaturalInput() {
           rows={3}
           required
           disabled={isPending}
-          placeholder="예) 오늘 99.25키로였고 점심으로 꼬북칩 초코추러스 먹고 저녁으로 계란국에 삼겹살에 밥 한 공기 먹었어"
+          placeholder="예) 오늘 78.45kg, 아침에 사과 한 개, 점심은 제육볶음에 밥 한 공기, 저녁엔 닭가슴살 샐러드 먹었고 헬스 1시간 했어"
           className="resize-none rounded-xl border border-slate-200 bg-white/80 px-3 py-2.5 text-sm text-slate-900 placeholder-slate-400 outline-none transition focus:border-emerald-400 focus:ring-2 focus:ring-emerald-200/60 disabled:opacity-60"
         />
         <button

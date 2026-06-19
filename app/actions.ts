@@ -4,6 +4,7 @@
 import { prisma } from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
 import { parseDietLog } from "@/lib/parseDietLog";
+import { generateReport as aiReport, type ReportMetrics, type ReportBody } from "@/lib/generateReport";
 
 type MealType = "BREAKFAST" | "LUNCH" | "DINNER" | "SNACK";
 
@@ -35,6 +36,7 @@ export async function parseAndLog(_prev: LogResult, formData: FormData): Promise
       }
       let weightDeleted = 0;
       let mealsDeleted = 0;
+      let exercisesDeleted = 0;
 
       if (parsed.deleteScope === "ALL" || parsed.deleteScope === "WEIGHT") {
         const r = await prisma.weightEntry.deleteMany({ where: { date } });
@@ -50,8 +52,12 @@ export async function parseAndLog(_prev: LogResult, formData: FormData): Promise
         });
         mealsDeleted = r.count;
       }
+      if (parsed.deleteScope === "ALL" || parsed.deleteScope === "EXERCISES") {
+        const r = await prisma.exerciseEntry.deleteMany({ where: { date } });
+        exercisesDeleted = r.count;
+      }
 
-      const total = weightDeleted + mealsDeleted;
+      const total = weightDeleted + mealsDeleted + exercisesDeleted;
       if (total === 0) {
         return { ok: false, error: `${dateLabel}에 지울 기록이 없었어요.` };
       }
@@ -59,6 +65,7 @@ export async function parseAndLog(_prev: LogResult, formData: FormData): Promise
       const parts: string[] = [];
       if (weightDeleted) parts.push(`몸무게 ${weightDeleted}건`);
       if (mealsDeleted) parts.push(`식사 ${mealsDeleted}건`);
+      if (exercisesDeleted) parts.push(`운동 ${exercisesDeleted}건`);
       return { ok: true, summary: `${dateLabel} ${parts.join(" · ")} 삭제` };
     }
 
@@ -75,9 +82,16 @@ export async function parseAndLog(_prev: LogResult, formData: FormData): Promise
         }),
       );
     }
+    for (const x of parsed.exercises) {
+      writes.push(
+        prisma.exerciseEntry.create({
+          data: { date, name: x.name, minutes: x.minutes, caloriesBurned: x.caloriesBurned },
+        }),
+      );
+    }
 
     if (writes.length === 0) {
-      return { ok: false, error: "몸무게나 식사 내용을 찾지 못했어요. 조금 더 구체적으로 적어볼까요?" };
+      return { ok: false, error: "몸무게·식사·운동 내용을 찾지 못했어요. 조금 더 구체적으로 적어볼까요?" };
     }
     await prisma.$transaction(writes);
     revalidatePath("/");
@@ -86,6 +100,7 @@ export async function parseAndLog(_prev: LogResult, formData: FormData): Promise
     const parts: string[] = [];
     if (parsed.weightKg !== null) parts.push(`몸무게 ${Math.round(parsed.weightKg * 100) / 100}kg`);
     for (const m of parsed.meals) parts.push(`${MEAL_LABEL[m.mealType]} ${m.name}`);
+    for (const x of parsed.exercises) parts.push(`🏃 ${x.name}`);
     return { ok: true, summary: parts.join(" · ") };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "정리 중 문제가 생겼어요." };
@@ -115,6 +130,85 @@ export async function addMeal(formData: FormData) {
   revalidatePath("/");
 }
 
+// 📊 AI 기간 리포트 — 기간 데이터를 집계해서 AI 평가를 받아 돌려준다
+export type ReportResult = { ok: boolean; error?: string; metrics?: ReportMetrics; report?: ReportBody };
+
+export async function makeReport(period: "week" | "month"): Promise<ReportResult> {
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    const t = new Date(today + "T00:00:00Z");
+    t.setUTCDate(t.getUTCDate() - (period === "week" ? 6 : 29));
+    const startStr = t.toISOString().slice(0, 10);
+    const startDate = new Date(startStr + "T00:00:00Z");
+    const fdate = (d: Date) => d.toISOString().slice(0, 10);
+    const md = (s: string) => {
+      const [, m, d] = s.split("-");
+      return `${+m}.${d}`;
+    };
+
+    const [weights, meals, exercises] = await Promise.all([
+      prisma.weightEntry.findMany({ where: { date: { gte: startDate } }, orderBy: { date: "asc" } }),
+      prisma.mealEntry.findMany({ where: { date: { gte: startDate } } }),
+      prisma.exerciseEntry.findMany({ where: { date: { gte: startDate } } }),
+    ]);
+
+    if (weights.length === 0 && meals.length === 0 && exercises.length === 0) {
+      return { ok: false, error: "기간 내 기록이 없어 리포트를 만들 수 없어요." };
+    }
+
+    // 몸무게 변화 (기간 첫↔끝)
+    const weightStart = weights.length ? Math.round(weights[0].weightKg * 100) / 100 : null;
+    const weightEnd = weights.length ? Math.round(weights[weights.length - 1].weightKg * 100) / 100 : null;
+    const weightChange =
+      weightStart !== null && weightEnd !== null ? Math.round((weightEnd - weightStart) * 100) / 100 : null;
+
+    // 일평균 섭취/소모 (기록된 날 기준)
+    const intakeMap = new Map<string, number>();
+    for (const m of meals) if (m.calories) intakeMap.set(fdate(m.date), (intakeMap.get(fdate(m.date)) ?? 0) + m.calories);
+    const burnMap = new Map<string, number>();
+    for (const x of exercises)
+      if (x.caloriesBurned) burnMap.set(fdate(x.date), (burnMap.get(fdate(x.date)) ?? 0) + x.caloriesBurned);
+    const avg = (m: Map<string, number>) =>
+      m.size ? Math.round([...m.values()].reduce((s, v) => s + v, 0) / m.size) : null;
+
+    // 기록한 날 수 (전체 합집합)
+    const days = new Set<string>();
+    for (const w of weights) days.add(fdate(w.date));
+    for (const m of meals) days.add(fdate(m.date));
+    for (const x of exercises) days.add(fdate(x.date));
+
+    const metrics: ReportMetrics = {
+      period,
+      rangeLabel: `${md(startStr)} ~ ${md(today)}`,
+      weightStart,
+      weightEnd,
+      weightChange,
+      avgIntake: avg(intakeMap),
+      avgBurn: avg(burnMap),
+      exerciseCount: exercises.length,
+      daysLogged: days.size,
+    };
+
+    const report = await aiReport(metrics);
+    return { ok: true, metrics, report };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "리포트 생성 중 문제가 생겼어요." };
+  }
+}
+
+// 🏃 운동 추가 (수동 입력 폼)
+export async function addExercise(formData: FormData) {
+  const date = new Date(formData.get("date") as string);
+  const name = (formData.get("name") as string).trim();
+  const minutesRaw = (formData.get("minutes") as string)?.trim();
+  const minutes = minutesRaw ? parseInt(minutesRaw, 10) : null;
+  const caloriesRaw = (formData.get("caloriesBurned") as string)?.trim();
+  const caloriesBurned = caloriesRaw ? parseInt(caloriesRaw, 10) : null;
+
+  await prisma.exerciseEntry.create({ data: { date, name, minutes, caloriesBurned } });
+  revalidatePath("/");
+}
+
 // 삭제 (id를 미리 bind해서 폼 action으로 씀)
 export async function deleteWeight(id: number) {
   await prisma.weightEntry.delete({ where: { id } });
@@ -123,5 +217,10 @@ export async function deleteWeight(id: number) {
 
 export async function deleteMeal(id: number) {
   await prisma.mealEntry.delete({ where: { id } });
+  revalidatePath("/");
+}
+
+export async function deleteExercise(id: number) {
+  await prisma.exerciseEntry.delete({ where: { id } });
   revalidatePath("/");
 }

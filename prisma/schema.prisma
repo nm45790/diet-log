@@ -36,3 +36,13 @@ enum MealType {
   DINNER
   SNACK
 }
+
+// 🏃 운동 기록 (그날 뭘 했는지 + 소모 칼로리)
+model ExerciseEntry {
+  id             Int      @id @default(autoincrement())
+  date           DateTime @db.Date
+  name           String // 운동 종류 (예: 헬스, 달리기, 산책)
+  minutes        Int? // 운동 시간(분) — 선택
+  caloriesBurned Int? // 소모 칼로리 추정 — 선택
+  createdAt      DateTime @default(now())
+}

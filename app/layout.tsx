@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import { BRAND } from "@/lib/brand";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -13,8 +14,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "다이어트 기록",
-  description: "몸무게와 식사를 기록하는 개인 앱",
+  title: `${BRAND.name} — ${BRAND.tagline}`,
+  description: "AI와 함께 몸무게·식사·운동을 기록하고 주간/월간 리포트로 진행 상황을 코칭받는 다이어트 앱",
 };
 
 export default function RootLayout({
